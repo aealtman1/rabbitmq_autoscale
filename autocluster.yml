@@ -1,0 +1,59 @@
+version: "3.6"
+services:
+  rabbit:
+    image: rabbitmq:autocluster
+    networks:
+      rabbit:
+    ports:
+      #Management UI port
+      - 15672:15672
+      #AMQP Port
+      - 5672:5672
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "cookie"
+    depends_on: 
+      - consul
+    deploy:
+      replicas: 3
+      update_config:
+          parallelism: 1
+          delay: 10s
+      restart_policy:
+          condition: on-failure
+
+  consul:
+    image: consul:latest
+    #Give each consul replica a unique name based on it's Docker variables (in this case, the Task Slot number)
+    hostname: "consul-{{.Task.Slot}}"
+    environment:
+      #Configure Consul to be a server and turn on debug messages for dev
+      CONSUL_LOCAL_CONFIG: '{
+        "server":true,
+        "enable_debug":true
+        }'
+    networks:
+      rabbit:
+      consul:
+    ports:
+      #Consul UI port
+      - 8500:8500
+    #Multi-line entrypoint command for consul options, many could also be placed in CONSUL_LOCAL_CONFIG
+    ##Run as server
+    ##Don't start the clustering protocol until 3 replicas are running
+    ##Start the UI service
+    ##Join the cluster using the service name (or rejoin on failure)
+    ##Explicit data directory (just for getting around quirks in server mode)
+    ##Listen on all ports for clients (RabbitMQ in this case)
+    ##Listen on a specific interface for other servers
+    command: ["consul", "agent", "-server", "-bootstrap-expect", "3", "-ui", "-join", "consul", "-retry-join", "consul", "-data-dir", "/consul/data", "-client", "0.0.0.0", "-bind", "{{GetInterfaceIP \"eth1\"}}"]
+    deploy:
+      replicas: 3
+      update_config:
+          parallelism: 1
+      restart_policy:
+          condition: on-failure
+networks:
+  rabbit:
+    driver: overlay
+  consul:
+    driver: overlay
